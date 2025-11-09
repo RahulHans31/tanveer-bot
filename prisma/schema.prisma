@@ -1,0 +1,26 @@
+// This block defines the Prisma Client generator.
+// It tells Prisma to create the JavaScript client.
+generator client {
+  provider = "prisma-client-js"
+}
+
+// This block defines your database connection.
+// It points to the Vercel Postgres database.
+datasource db {
+  provider = "postgresql"
+  // This MUST match the variable Vercel created for you.
+  url      = env("DATABASE_URL") 
+}
+
+// This is the model for your products table.
+// This defines the structure of your data.
+model Product {
+  id        Int      @id @default(autoincrement())
+  name      String
+  url       String
+  productId String   @map("product_id") // Maps to 'product_id' column in the DB
+  storeType String   @map("store_type") // Maps to 'store_type' column in the DB
+  createdAt DateTime @default(now())    @map("created_at")
+
+  @@map("products") // This names the actual table in your database 'products'
+}
