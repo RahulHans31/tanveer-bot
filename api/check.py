@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 import os, json, requests, psycopg2, datetime, hashlib, hmac, time
 from urllib.parse import urlparse, parse_qs
+from bs4 import BeautifulSoup, Comment
 
 # ==================================
 # 🔧 CONFIGURATION
@@ -34,11 +35,11 @@ class handler(BaseHTTPRequestHandler):
         try:
             in_stock_messages, summary = main_logic()
 
-            if in_stock_messages:
-                print(f"[info] Found {len(in_stock_messages)} products in stock. Sending Telegram message.")
-                final_message = "🔥 *Stock Alert!*\n\n" + "\n\n".join(in_stock_messages) + "\n\n" + summary
-            else:
-                final_message = "❌ *No stock available currently.*\n\n" + summary
+            final_message = (
+                "🔥 *Stock Alert!*\n\n" + "\n\n".join(in_stock_messages) + "\n\n" + summary
+                if in_stock_messages
+                else "❌ *No stock available currently.*\n\n" + summary
+            )
 
             send_telegram_message(final_message)
 
@@ -133,73 +134,77 @@ def check_croma(product, pincode):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         data = res.json()
-        lines = data.get("promise", {}).get("suggestedOption", {}).get("option", {}).get("promiseLines", {}).get("promiseLine", [])
+
+        lines = (
+            data.get("promise", {})
+            .get("suggestedOption", {})
+            .get("option", {})
+            .get("promiseLines", {})
+            .get("promiseLine", [])
+        )
+
         if lines:
-            print(f"[CROMA] ✅ ({product['name']}) deliverable to {pincode}")
+            print(f"[CROMA] ✅ {product['name']} deliverable to {pincode}")
             return f"✅ *Croma*\n[{product['name']}]({product['affiliateLink'] or product['url']})"
-        else:
-            print(f"[CROMA] ❌ ({product['name']}) unavailable at {pincode}")
+
+        print(f"[CROMA] ❌ {product['name']} unavailable at {pincode}")
     except Exception as e:
         print(f"[error] Croma check failed for {product['name']}: {e}")
     return None
 
 # ==================================
-# 🛍️ FLIPKART CHECKER (Improved)
+# 🟣 FLIPKART HTML CHECKER
 # ==================================
 def check_flipkart(product, pincode="132001"):
     try:
-        parsed_url = urlparse(product["url"])
-        page_uri = parsed_url.path + ("?" + parsed_url.query if parsed_url.query else "")
-
-        payload = {
-            "pageUri": page_uri,
-            "pageContext": {"trackingContext": {}, "networkSpeed": 10000},
-            "locationContext": {"pincode": pincode, "changed": False}
-        }
+        url = product["url"]
+        if "?pincode=" not in url:
+            if "?" in url:
+                url += f"&pincode={pincode}"
+            else:
+                url += f"?pincode={pincode}"
 
         headers = {
-            "accept": "*/*",
-            "content-type": "application/json",
-            "origin": "https://www.flipkart.com",
-            "referer": "https://www.flipkart.com/",
-            "user-agent": (
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
             ),
-            "x-user-agent": (
-                "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 "
-                "Mobile Safari/537.36 FKUA/msite/0.0.3/msite/Mobile"
-            ),
-            "flipkart_secure": "true"
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.flipkart.com/",
         }
 
-        def make_request(timeout):
-            return requests.post(
-                "https://2.rome.api.flipkart.com/api/4/page/fetch?cacheFirst=false",
-                headers=headers,
-                json=payload,
-                timeout=timeout
-            )
-
-        try:
-            res = make_request(timeout=12)
-        except requests.exceptions.ReadTimeout:
-            print(f"[FLIPKART] ⚠️ Timeout for {product['name']}, retrying with longer timeout...")
-            res = make_request(timeout=20)
-
-        data = res.json()
-        body = json.dumps(data).lower()
-
-        if any(k in body for k in ["out of stock", "not available", "unavailable"]):
-            print(f"[FLIPKART] ❌ ({product['name']}) not deliverable at {pincode}")
+        res = requests.get(url, headers=headers, timeout=15)
+        if res.status_code != 200:
+            print(f"[FLIPKART] ⚠️ Failed ({res.status_code}) for {product['name']}")
             return None
 
-        if any(k in body for k in ["delivery by", "get it by", "in stock", "delivers to"]):
-            print(f"[FLIPKART] ✅ ({product['name']}) deliverable to {pincode}")
+        soup = BeautifulSoup(res.text, "html.parser")
+
+        for tag in soup(["script", "style"]):
+            tag.decompose()
+        for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
+            comment.extract()
+
+        page_text = soup.get_text(separator=" ").lower()
+
+        unavailable_keywords = [
+            "not deliverable", "out of stock", "currently unavailable",
+            "sold out", "item not deliverable", "delivery not available"
+        ]
+        if any(k in page_text for k in unavailable_keywords):
+            print(f"[FLIPKART] ❌ {product['name']} not deliverable at {pincode}")
+            return None
+
+        delivery_elements = soup.find_all(
+            string=lambda text: text and any(k in text.lower() for k in ["delivery by", "get it by", "delivered by"])
+        )
+
+        if delivery_elements:
+            print(f"[FLIPKART] ✅ {product['name']} deliverable to {pincode}")
             return f"✅ *Flipkart*\n[{product['name']}]({product['affiliateLink'] or product['url']})"
 
-        print(f"[FLIPKART] ⚠️ Unknown stock pattern for {product['name']}")
+        print(f"[FLIPKART] ❌ {product['name']} not deliverable at {pincode}")
         return None
 
     except Exception as e:
@@ -288,7 +293,7 @@ def check_amazon(product):
             return f"✅ *Amazon*\n[{title}]({product['affiliateLink'] or product['url']})\n💰 {price}\n📦 {availability}"
 
         if "TooManyRequests" in str(data):
-            print(f"[AMAZON] ⚠️ Skipping ({product['storeType']}) {product['name']} (throttled).")
+            print(f"[AMAZON] ⚠️ Skipping {product['name']} (throttled).")
             return None
 
         print(f"[AMAZON] ⚠️ No stock info for {product['name']}")
@@ -300,6 +305,7 @@ def check_amazon(product):
 # 🚀 MAIN LOGIC
 # ==================================
 def main_logic():
+    start_time = time.time()
     print("[info] Starting stock check...")
     products = get_products_from_db()
     in_stock = []
@@ -331,11 +337,13 @@ def main_logic():
                 amazon_count += 1
                 in_stock.append(result)
 
+    duration = round(time.time() - start_time, 2)
     summary = (
         f"🟢 *Croma:* {croma_count}/{croma_total}\n"
         f"🟣 *Flipkart:* {flip_count}/{flip_total}\n"
         f"🟡 *Amazon:* {amazon_count}/{amazon_total}\n"
-        f"📦 *Total:* {len(in_stock)} available"
+        f"📦 *Total:* {len(in_stock)} available\n"
+        f"⏱ *Time taken:* {duration}s"
     )
 
     print(f"[info] ✅ Found {len(in_stock)} products in stock.")
