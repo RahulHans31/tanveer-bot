@@ -28,7 +28,8 @@ export function AddProductForm({ addProductAction }) {
         <Input
           type="text"
           name="url"
-          placeholder="Paste Croma or Apple URL"
+          // --- UPDATED PLACEHOLDER ---
+          placeholder="Paste Croma, Apple, or Amazon URL"
           required
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -36,7 +37,6 @@ export function AddProductForm({ addProductAction }) {
         <Button type="submit">Add Product</Button>
       </div>
       
-      {/* This is the new conditional field for Apple */}
       {showPartNumber && (
         <Input
           type="text"
@@ -47,14 +47,11 @@ export function AddProductForm({ addProductAction }) {
         />
       )}
 
-      {/* --- ADD THIS NEW FIELD --- */}
       <Input
         type="text"
         name="affiliateLink"
         placeholder="Your Affiliate Link (Optional)"
       />
-      {/* ------------------------ */}
-
     </form>
   );
 }

@@ -2,11 +2,25 @@ from http.server import BaseHTTPRequestHandler
 import os, json, requests, psycopg2
 from urllib.parse import urlparse, parse_qs
 
+# --- NEW AMAZON API IMPORTS ---
+from paapi5_python_sdk.api.default_api import DefaultApi
+from paapi5_python_sdk.models.get_items_request import GetItemsRequest
+from paapi5_python_sdk.models.get_items_resource import GetItemsResource
+from paapi5_python_sdk.partner_type import PartnerType
+from paapi5_python_sdk.rest import ApiException
+# --------------------------------
+
 # --- 1. CONFIGURATION ---
 PINCODES_TO_CHECK = ['132001']
 DATABASE_URL = os.environ.get('DATABASE_URL')
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 CRON_SECRET = os.environ.get('CRON_SECRET')
+
+# --- NEW AMAZON SECRETS ---
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+AMAZON_PARTNER_TAG = os.environ.get('AMAZON_PARTNER_TAG')
+# ---------------------------
 
 # --- 2. VERCEK HANDLER ---
 class handler(BaseHTTPRequestHandler):
@@ -48,7 +62,9 @@ def get_products_from_db():
     print("Connecting to database...")
     conn = psycopg2.connect(DATABASE_URL)
     cursor = conn.cursor()
-    cursor.execute("SELECT name, url, product_id, store_type, affiliate_link FROM products")
+    
+    # Updated query to get Croma AND Amazon products
+    cursor.execute("SELECT name, url, product_id, store_type, affiliate_link FROM products WHERE store_type IN ('croma', 'amazon')")
     products = cursor.fetchall()
     conn.close()
     
@@ -56,7 +72,7 @@ def get_products_from_db():
         {"name": row[0], "url": row[1], "productId": row[2], "storeType": row[3], "affiliateLink": row[4]}
         for row in products
     ]
-    print(f"Found {len(products_list)} products in the database.")
+    print(f"Found {len(products_list)} Croma & Amazon products in the database.")
     return products_list
 
 # --- 4. TELEGRAM SENDER ---
@@ -64,22 +80,30 @@ def send_telegram_message(message):
     if not TELEGRAM_BOT_TOKEN:
         print("Telegram BOT TOKEN not set. Skipping message.")
         return
-    chat_ids = ['7992845749', '984016385' , '6644657779' , '8240484793' , '1813686494' ,'1438419270' ,'939758815' , '7500224400' , '8284863866' , '837532484' , '667911343' , '1476695901' , '6878100797' , '574316265' , '1460192633' , '978243265' ,'5871190519' ,'766044262' ,'1639167211' , '849850934' ,'757029917' , '5756316614' ,'5339576661' , '6137007196' , '7570729917']
-    print(f"Sending message to {len(chat_ids)} users...")
-    for chat_id in chat_ids:
-        if not chat_id.strip(): continue
-        
-        # --- THIS IS THE FIXED URL ---
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        # -----------------------------
 
-        payload = {'chat_id': chat_id.strip(), 'text': message, 'parse_mode': 'Markdown', 'disable_web_page_preview': True}
+    # Your hardcoded list of chat IDs
+    chat_ids = ['7992845749', '984016385' , '6644657779' , '8240484793' , '1813686494' ,'1438419270' ,'939758815' , '7500224400' , '8284863866' , '837532484' , '667911343' , '1476695901' , '6878100797' , '574316265' , '1460192633' , '978243265' ,'5871190519' ,'766044262' ,'1639167211' , '849850934' ,'757029917' , '5756316614' ,'5339576661' , '6137007196' , '7570729917' ,'79843912' , '1642837409' , '724035898'] 
+    
+    print(f"Sending message to {len(chat_ids)} users...")
+
+    for chat_id in chat_ids:
+        if not chat_id.strip():
+            continue
+            
+        url = f"https{api.telegram.org/bot}{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': chat_id.strip(),
+            'text': message,
+            'parse_mode': 'Markdown',
+            'disable_web_page_preview': True
+        }
+        
         try:
             requests.post(url, json=payload, timeout=5)
         except Exception as e:
             print(f"Failed to send message to {chat_id}: {e}")
 
-# --- 5. CROMA CHECKER (UPDATED FOR DEBUGGING) ---
+# --- 5. CROMA CHECKER ---
 def check_croma(product, pincode):
     url = 'https://api.croma.com/inventory/oms/v2/tms/details-pwa/'
     payload = {"promise": {"allocationRuleID": "SYSTEM", "checkInventory": "Y", "organizationCode": "CROMA", "sourcingClassification": "EC", "promiseLines": {"promiseLine": [{"fulfillmentType": "HDEL", "itemID": product["productId"], "lineId": "1", "requiredQty": "1", "shipToAddress": {"zipCode": pincode}, "extn": {"widerStoreFlag": "N"}}]}}}
@@ -88,34 +112,71 @@ def check_croma(product, pincode):
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         res.raise_for_status() 
+        data = res.json()
         
-        try:
-            # Try to parse JSON normally
-            data = res.json()
-            # If it works, check for stock
-            if data.get("promise", {}).get("suggestedOption", {}).get("option", {}).get("promiseLines", {}).get("promiseLine"):
-                link_to_send = product["affiliateLink"] or product["url"]
-                return { "name": product["name"], "url": link_to_send }
-        except requests.exceptions.JSONDecodeError:
-            # This is the "Expecting value" error.
-            # If it fails, print the raw text response to the logs.
-            print("--- CROMA DEBUG: FAILED TO PARSE JSON ---")
-            print(f"Product: {product['name']}")
-            print(f"Status Code: {res.status_code}")
-            print(f"Raw Response Text: {res.text}")
-            print("--- END CROMA DEBUG ---")
+        if data.get("promise", {}).get("suggestedOption", {}).get("option", {}).get("promiseLines", {}).get("promiseLine"):
+            link_to_send = product["affiliateLink"] or product["url"]
+            return f'✅ *In Stock at Croma ({pincode})*\n[{product["name"]}]({link_to_send})'
             
     except Exception as e:
         print(f'Error checking Croma ({product["name"]}): {e}')
+    return None 
+
+# --- 6. NEW AMAZON CHECKER (Using PAAPI v5) ---
+def check_amazon(product):
+    if not all([AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AMAZON_PARTNER_TAG]):
+        print("Amazon API credentials not set. Skipping Amazon.")
+        return None
+
+    asin = product["productId"]
+    
+    api_client = DefaultApi(
+        access_key=AWS_ACCESS_KEY_ID,
+        secret_key=AWS_SECRET_ACCESS_KEY,
+        host="webservices.amazon.in",
+        region="eu-west-1" 
+    )
+
+    resources = [
+        GetItemsResource.ITEMINFO_TITLE,
+        GetItemsResource.OFFERS_LISTINGS_AVAILABILITY_MESSAGE,
+        GetItemsResource.OFFERS_LISTINGS_CONDITION,
+        GetItemsResource.OFFERS_LISTINGS_PRICE
+    ]
+
+    get_items_request = GetItemsRequest(
+        item_ids=[asin],
+        resources=resources,
+        partner_tag=AMAZON_PARTNER_TAG,
+        partner_type=PartnerType.ASSOCIATES,
+        marketplace="www.amazon.in"
+    )
+
+    try:
+        print(f"Checking Amazon for: {product['name']}...")
+        response = api_client.get_items(get_items_request)
+
+        if response.items_result and response.items_result.items:
+            item = response.items_result.items[0]
+            if item.offers and item.offers.listings:
+                availability = item.offers.listings[0].availability.message
+                print(f"...Amazon item {product['name']} is: {availability}")
+                
+                if "in stock" in availability.lower():
+                    link_to_send = product["affiliateLink"] or product["url"]
+                    return f'✅ *InStock at Amazon*\n[{product["name"]}]({link_to_send})'
+        
+        print(f"...Amazon item {product['name']} is Out of Stock.")
+        return None
+
+    except ApiException as e:
+        print(f"Error checking Amazon API for ASIN {asin}: {e}")
+    except Exception as e:
+        print(f"Non-API error checking Amazon ({product['name']}): {e}")
+    
     return None
 
-# --- 6. FLIPKART CHECKER ---
-# (We are still skipping this, but the function is here if you want to add a proxy later)
-def check_flipkart(product, pincode):
-    print(f'Skipping Flipkart check for {product["name"]}.')
-    return None
-    
-# --- 7. MAIN LOGIC ---
+# --- 7. MAIN LOGIC (Called by Vercel Handler) ---
 def main_logic():
     print("Starting stock check...")
     try:
@@ -123,20 +184,24 @@ def main_logic():
     except Exception as e:
         print(f"Failed to fetch products from database: {e}")
         send_telegram_message(f"❌ Your checker script failed to connect to the database.")
-        return [] 
+        return [] # Return empty list on failure
 
     in_stock_messages = []
     
     for product in products_to_track:
-        for pincode in PINCODES_TO_CHECK:
-            result_data = None
-            if product["storeType"] == 'croma':
-                result_data = check_croma(product, pincode)
-            elif product["storeType"] == 'flipkart':
-                result_data = check_flipkart(product, pincode) # This will just skip
-            
-            if result_data:
-                message = f'✅ *In Stock at {product["storeType"].capitalize()} ({pincode})*\n[{result_data["name"]}]({result_data["url"]})'
-                in_stock_messages.append(message)
+        result_message = None
+        if product["storeType"] == 'croma':
+            # Croma check needs to loop through pincodes
+            for pincode in PINCODES_TO_CHECK:
+                result_message = check_croma(product, pincode)
+                if result_message:
+                    in_stock_messages.append(result_message)
+                    break # Found stock, stop checking other pincodes for this item
+        
+        elif product["storeType"] == 'amazon':
+            # Amazon check doesn't use pincode, runs once
+            result_message = check_amazon(product)
+            if result_message:
+                in_stock_messages.append(result_message)
     
     return in_stock_messages

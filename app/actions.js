@@ -3,12 +3,34 @@
 import { prisma } from '@/lib/prisma';
 import { revalidatePath } from 'next/cache';
 
-// getProductDetails function (no changes needed)
+// This function parses the URL you paste in
 function getProductDetails(url, partNumber) {
-  // ... (this function is the same as before) ...
   try {
     const parsedUrl = new URL(url);
 
+    // --- NEW AMAZON LOGIC ---
+    if (parsedUrl.hostname.includes('amazon.in')) {
+      // Find the ASIN, which is usually after /dp/
+      const pathParts = parsedUrl.pathname.split('/');
+      const dpIndex = pathParts.indexOf('dp');
+      
+      if (dpIndex === -1 || !pathParts[dpIndex + 1]) {
+        throw new Error('Could not find a valid ASIN (e.g., /dp/B0CX59H5W7) in the Amazon URL.');
+      }
+      
+      const asin = pathParts[dpIndex + 1];
+      const name = (pathParts[dpIndex - 1] || 'Amazon Product')
+                   .replace(/-/g, ' ').slice(0, 50) + '...';
+      
+      return {
+        name: `(Amazon) ${name}`,
+        productId: asin, // For Amazon, the ASIN is the Product ID
+        storeType: 'amazon',
+        partNumber: null // We don't need this for Amazon
+      };
+    }
+
+    // --- APPLE LOGIC ---
     if (parsedUrl.hostname.includes('apple.com')) {
       if (!partNumber) {
         throw new Error('Apple products require a Part Number.');
@@ -17,12 +39,13 @@ function getProductDetails(url, partNumber) {
                    .replace(/-/g, ' ').slice(0, 50) + '...';
       return {
         name: `(Apple) ${name}`,
-        productId: partNumber, 
+        productId: partNumber,
         storeType: 'apple',
         partNumber: partNumber
       };
     }
     
+    // --- CROMA LOGIC ---
     if (parsedUrl.hostname.includes('croma.com')) {
       const pathParts = parsedUrl.pathname.split('/');
       const pid = pathParts[pathParts.length - 1];
@@ -37,19 +60,17 @@ function getProductDetails(url, partNumber) {
       };
     }
 
-    throw new Error('Sorry, only Croma and Apple URLs are supported.');
+    throw new Error('Sorry, only Croma, Apple, and Amazon URLs are supported.');
   
   } catch (error) {
     return { error: error.message };
   }
 }
 
-// Server Action to add a product (UPDATE THIS)
+// Server Action to add a product (no new changes needed)
 export async function addProduct(formData) {
   const url = formData.get('url');
   const partNumber = formData.get('partNumber');
-  
-  // --- GET THE NEW FIELD ---
   const affiliateLink = formData.get('affiliateLink');
 
   if (!url) return { error: 'URL is required.' };
@@ -65,9 +86,7 @@ export async function addProduct(formData) {
         productId: details.productId,
         storeType: details.storeType,
         partNumber: details.partNumber,
-        
-        // --- SAVE THE NEW FIELD ---
-        affiliateLink: affiliateLink || null, // Save it (or null if empty)
+        affiliateLink: affiliateLink || null,
       },
     });
     revalidatePath('/');
@@ -78,14 +97,11 @@ export async function addProduct(formData) {
   }
 }
 
-// deleteProduct function (no changes needed)
+// deleteProduct (no changes needed)
 export async function deleteProduct(id) {
- // ... (this function is the same as before) ...
   if (!id) return;
   try {
     await prisma.product.delete({ where: { id: id } });
     revalidatePath('/');
-  } catch (error) {
-    // Fail silently
-  }
+  } catch (error) {}
 }
