@@ -343,7 +343,77 @@ def check_amazon(product):
         return None
 
 # ==================================
-# 🚀 MAIN LOGIC (MODIFIED to include Unicorn)
+# 🟦 VIVO CHECKER
+# ==================================
+def check_vivo(product):
+    """Check stock availability for Vivo by scraping the product page."""
+    url = product["url"]
+    print(f"[VIVO] Checking: {url}")
+    
+    # Use a standard browser user agent
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/137.0.0.0 Safari/537.36"
+        ),
+    }
+
+    try:
+        res = requests.get(url, headers=headers, timeout=20)
+        res.raise_for_status()
+        html = res.text
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Generic stock check indicators
+        out_of_stock_indicators = ["Out of stock", "Notify Me", "Sold out", "currently unavailable"]
+
+        # Attempt to find the main action button or stock status
+        stock_status_el = soup.select_one(".add-to-cart-btn, #buy-now-button, .product-stock-status")
+        
+        # Fallback to general page text
+        page_text = soup.get_text().lower()
+
+        is_available = True
+        
+        # Check explicit negative indicators
+        if stock_status_el:
+            status_text = stock_status_el.get_text(strip=True)
+            if any(phrase.lower() in status_text.lower() for phrase in out_of_stock_indicators):
+                is_available = False
+        elif any(phrase.lower() in page_text for phrase in out_of_stock_indicators):
+             is_available = False
+        
+        # If no explicit negative indicators found, assume availability
+        if is_available:
+            title_el = soup.select_one("h1.product-title")
+            title = title_el.get_text(strip=True) if title_el else product["name"]
+            
+            print(f"[VIVO] ✅ {title} is available.")
+            return (
+                f"✅ *Vivo*\n"
+                f"[{title}]({product['affiliateLink'] or url})"
+            )
+        else:
+            print(f"[VIVO] ❌ {product['name']} appears unavailable.")
+            return None
+
+    except Exception as e:
+        print(f"[error] Vivo check failed for {product['name']}: {e}")
+        return None
+
+# ==================================
+# 🟧 IQOO CHECKER
+# ==================================
+# Using the same logic as Vivo as a starting point since iQOO is a Vivo sub-brand.
+def check_iqoo(product):
+    """Check stock availability for iQOO by scraping the product page."""
+    # Note: If the iQOO site structure differs significantly, this function may need custom selectors.
+    # For now, it delegates to the generic check_vivo function.
+    return check_vivo(product)
+
+# ==================================
+# 🚀 MAIN LOGIC (MODIFIED to include Unicorn, VIVO, and IQOO)
 # ==================================
 def main_logic():
     start_time = time.time()
@@ -351,9 +421,9 @@ def main_logic():
     products = get_products_from_db()
     in_stock = []
     
-    # Initialize all counters, including Unicorn
-    croma_count = flip_count = amazon_count = unicorn_count = 0
-    croma_total = flip_total = amazon_total = unicorn_total = 0
+    # Initialize all counters, including Unicorn, Vivo, and iQOO
+    croma_count = flip_count = amazon_count = unicorn_count = vivo_count = iqoo_count = 0
+    croma_total = flip_total = amazon_total = unicorn_total = vivo_total = iqoo_total = 0
 
     # ----------------------------------------------------
     # NEW: Check Unicorn stock separately for iPhone 17 variants
@@ -392,15 +462,31 @@ def main_logic():
             if result:
                 amazon_count += 1
                 in_stock.append(result)
+        # --- NEW VIVO CHECK ---
+        elif product["storeType"] == "vivo":
+            vivo_total += 1
+            result = check_vivo(product)
+            if result:
+                vivo_count += 1
+                in_stock.append(result)
+        # --- NEW IQOO CHECK ---
+        elif product["storeType"] == "iqoo":
+            iqoo_total += 1
+            result = check_iqoo(product)
+            if result:
+                iqoo_count += 1
+                in_stock.append(result)
 
     duration = round(time.time() - start_time, 2)
     timestamp = datetime.datetime.now().strftime("%d %b %Y %I:%M %p")
 
-    # Final Summary (Unicorn line added)
+    # Final Summary (Vivo and iQOO lines added)
     summary = (
         f"🟢 *Croma:* {croma_count}/{croma_total}\n"
         f"🟣 *Flipkart:* {flip_count}/{flip_total}\n"
         f"🟡 *Amazon:* {amazon_count}/{amazon_total}\n"
+        f"🟦 *Vivo:* {vivo_count}/{vivo_total}\n"
+        f"🟧 *iQOO:* {iqoo_count}/{iqoo_total}\n"
         f"🦄 *Unicorn:* {unicorn_count}/{unicorn_total} (256GB)\n"
         f"📦 *Total:* {len(in_stock)} available\n"
         f"🕒 *Checked:* {timestamp}\n"

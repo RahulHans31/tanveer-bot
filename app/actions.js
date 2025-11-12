@@ -8,6 +8,44 @@ function getProductDetails(url, partNumber) {
   try {
     const parsedUrl = new URL(url);
 
+    // --- NEW VIVO LOGIC ---
+    if (parsedUrl.hostname.includes('vivo.com') && !parsedUrl.hostname.includes('iqoo.com')) {
+      // Vivo product ID is typically the last segment of the path after the product name
+      const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
+      const pid = pathParts[pathParts.length - 1];
+      
+      if (!pid || pid.length < 5) throw new Error('Could not find a valid product ID in the Vivo URL.');
+      
+      const name = (pathParts[pathParts.length - 2] || 'Vivo Product')
+                   .replace(/-/g, ' ').slice(0, 50) + '...';
+      
+      return { 
+        name: `(Vivo) ${name}`, 
+        productId: pid, 
+        storeType: 'vivo', 
+        partNumber: null 
+      };
+    }
+
+    // --- NEW IQOO LOGIC ---
+    if (parsedUrl.hostname.includes('iqoo.com')) {
+      // iQOO product ID is typically the last segment of the path after the product name
+      const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
+      const pid = pathParts[pathParts.length - 1];
+      
+      if (!pid || pid.length < 5) throw new Error('Could not find a valid product ID in the iQOO URL.');
+      
+      const name = (pathParts[pathParts.length - 2] || 'iQOO Product')
+                   .replace(/-/g, ' ').slice(0, 50) + '...';
+      
+      return { 
+        name: `(iQOO) ${name}`, 
+        productId: pid, 
+        storeType: 'iqoo', 
+        partNumber: null 
+      };
+    }
+    
     // --- NEW FLIPKART LOGIC ---
     if (parsedUrl.hostname.includes('flipkart.com')) {
       // Flipkart ID is in the 'pid' query parameter
@@ -79,7 +117,7 @@ function getProductDetails(url, partNumber) {
     }
 
     // --- UPDATED ERROR MESSAGE ---
-    throw new Error('Sorry, only Croma, Apple, Amazon, and Flipkart URLs are supported.');
+    throw new Error('Sorry, only Croma, Apple, Amazon, Flipkart, Vivo, and iQOO URLs are supported.');
   
   } catch (error) {
     return { error: error.message };
