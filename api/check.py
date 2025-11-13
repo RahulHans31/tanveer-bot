@@ -350,56 +350,99 @@ def check_amazon(product):
 # ==================================
 def check_reliance_digital(product, pincode):
     """
-    Check stock availability for a Reliance Digital product by dynamically fetching the 
-    internal 'article_id' using the product URL (stored in productId), and then querying the inventory API.
+    Check stock availability for a Reliance Digital product by querying the 
+    inventory API directly using the internal 'article_id' (now stored in productId).
     """
     name = product["name"]
     url = product["url"]
-    product_slug = product["productId"] # Contains the URL slug, e.g., 'apple-iphone-17-256-gb-black-mff8ru-9391619'
+    # The 'productId' now contains the **internal Article ID** (e.g., '493839312')
+    article_id = product["productId"] 
     
-    if not product_slug:
-        print(f"[RD] ❌ Cannot check {name}: Missing product slug/ID.")
+    if not article_id:
+        print(f"[RD] ❌ Cannot check {name}: Missing internal Article ID.")
         return None
 
     # ----------------------------------------
-    # STEP 1: Dynamically Get Article ID (item_code) using the slug
+    # STEP 1: Dynamically Get Article ID (DELETED)
+    # The ID is now fetched by the Node.js frontend and stored in product["productId"].
     # ----------------------------------------
-    article_id = None
+
+    # ----------------------------------------
+    # STEP 2: Check Stock using the Article ID
+    # ----------------------------------------
+    print(f"[RD] Checking stock: {name} (ID: {article_id}) for Pincode {pincode}")
+
+    inventory_url = "https://www.reliancedigital.in/ext/raven-api/inventory/multi/articles-v2"
+    
+    inventory_headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/json",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "origin": "https://www.reliancedigital.in",
+        "referer": "https://www.reliancedigital.in/",
+    }
+
+    # API Payload 
+    payload = {
+        "articles": [
+            {
+                "article_id": str(article_id),
+                "custom_json": {}, 
+                "quantity": 1
+            }
+        ],
+        "phone_number": "0",
+        "pincode": str(pincode),
+        "request_page": "pdp"
+    }
+
     try:
-        details_api_url = f"https://www.reliancedigital.in/api/service/application/catalog/v1.0/products/{product_slug}/"
+        res = requests.post(inventory_url, headers=inventory_headers, json=payload, timeout=20)
+        res.raise_for_status() 
+        data = res.json()
         
-        details_headers = {
-            "Accept": "application/json, text/plain, */*",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-            "x-currency-code": "INR",
-            "x-location-detail": '{"country_iso_code":"IN"}'
-        }
+        article_data = data.get("data", {}).get("articles", [])
+        if not article_data:
+            return None
 
-        res_details = requests.get(details_api_url, headers=details_headers, timeout=10)
-        res_details.raise_for_status()
-        data_details = res_details.json()
-
-        article_id = data_details.get("item_code")
+        article = article_data[0]
         
-        # Fallback check within grouped_attributes if item_code is missing at the top level
-        if not article_id:
-            for group in data_details.get("grouped_attributes", []):
-                for detail in group.get("details", []):
-                    if detail.get("key") == "Item Code":
-                        article_id = detail.get("value")
-                        break
-                if article_id:
-                    break
-
-        if not article_id:
-            raise ValueError("Item Code (Article ID) not found in product details API response.")
-            
-        print(f"[RD] Found Article ID: {article_id} for {name}")
+        # Determine stock status: Available if there is NO meaningful error type
+        article_error = article.get("error", {})
+        error_type = article_error.get("type")
         
-    except Exception as e:
-        print(f"[error] Reliance Digital ID lookup failed for {name} ({url}): {e}")
+        is_in_stock = not (error_type and error_type in ["OutOfStockError", "FaultyArticleError"])
+        
+        # Try to extract price from the product page using BS (fallback)
+        price = None
+        try:
+            res_html = requests.get(url, headers=inventory_headers, timeout=10)
+            soup = BeautifulSoup(res_html.text, "html.parser")
+            price_el = soup.select_one('.pdpPrice, .product-price .amount, .final-price, [class*="Price"]')
+            if price_el:
+                # Clean up the price string
+                price = price_el.get_text(strip=True).replace('\n', ' ').replace('₹', '').strip() 
+        except Exception:
+            pass 
+
+        if is_in_stock:
+            print(f"[RD] ✅ {name} is IN STOCK at {pincode}.")
+            return (
+                f"✅ *Reliance Digital*\n"
+                f"[{name}]({product['affiliateLink'] or url})"
+                + (f"\n💰 Price: ₹{price}" if price else "")
+            )
+        else:
+            error_message = article_error.get("message", "Stock Error")
+            print(f"[RD] ❌ {name} is UNAVAILABLE at {pincode}. (Error: {error_message})")
+            return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"[error] Reliance Digital inventory check failed for {name}: {e}")
         return None
-
+    except Exception as e:
+        print(f"[error] Reliance Digital check failed for {name} (general): {e}")
+        return None
 
     # ----------------------------------------
     # STEP 2: Check Stock using the Article ID
