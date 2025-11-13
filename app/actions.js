@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 
 /**
  * Fetches the Reliance Digital product page and scrapes the internal Article ID (Item Code).
- * This replaces the need for the Python scraper in this case.
+ * It attempts to find the ID in the specifications list.
  * @param {string} url - The full Reliance Digital product URL.
  * @returns {Promise<string|null>} The internal 9-digit Article ID string or null.
  */
@@ -19,7 +19,8 @@ async function getRelianceDigitalArticleId(url) {
                 // Using a mobile-like user agent to ensure correct page structure is received
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
             },
-            timeout: 10000 // 10 second timeout for the request
+            // Note: Node's native fetch doesn't support a 'timeout' option in headers directly.
+            // A controller/wrapper would be needed for true timeout control, but we rely on default for brevity.
         });
 
         if (!response.ok) {
@@ -32,7 +33,7 @@ async function getRelianceDigitalArticleId(url) {
 
         let articleId = null;
 
-        // Target the <li> in the specifications section that lists "Item Code"
+        // 1. Target the <li> in the specifications section that lists "Item Code"
         $('li.specifications-list').each((i, el) => {
             const label = $(el).find('span:first-child').text().trim();
             if (label === 'Item Code') {
@@ -41,6 +42,18 @@ async function getRelianceDigitalArticleId(url) {
                 return false; // Stop the loop once the ID is found
             }
         });
+
+        // 2. Fallback: Check the og:image URL in metadata (less reliable but often present)
+        if (!articleId) {
+            const imageMeta = $('meta[property="og:image"]').attr('content');
+            if (imageMeta) {
+                // Use regex to find the 9-digit number right before '-i-1' in the filename
+                const match = imageMeta.match(/-(\d{9})-i-1/);
+                if (match) {
+                    articleId = match[1];
+                }
+            }
+        }
 
         return articleId;
     } catch (error) {
@@ -111,7 +124,7 @@ async function getProductDetails(url, partNumber) {
                 // Store the actual scraped internal Article ID for API tracking
                 productId: internalArticleId, 
                 storeType: 'reliance_digital', 
-                // We save the original slug/url part just in case, or we could set this to null.
+                // We save the original slug/url part just in case, for reference
                 partNumber: slug 
             };
         }
