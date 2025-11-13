@@ -346,7 +346,7 @@ def check_amazon(product):
         return None
 
 # ==================================
-# 🌐 RELIANCE DIGITAL API CHECKER
+# 🌐 RELIANCE DIGITAL API CHECKER (MODIFIED TO USE DB ID)
 # ==================================
 def check_reliance_digital(product, pincode):
     """
@@ -442,23 +442,11 @@ def check_reliance_digital(product, pincode):
 # ==================================
 # 📱 IQOO HTML PARSER CHECKER (MODIFIED)
 # ==================================
-# ... (rest of the check.py file remains unchanged until check_iqoo)
-
-# ==================================
-# 📱 IQOO HTML PARSER CHECKER (MODIFIED FOR PRECISE OFFERS)
-# ==================================
 def check_iqoo(product):
-    # ... (function start remains the same)
+    """Check stock availability for an iQOO product by scraping its product page."""
     url = product["url"]
     print(f"[IQOO] Checking: {url}")
 
-    # --- SKU HANDLING (UNCHANGED) ---
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
-    sku_id = query_params.get('skuId', [None])[0]
-    if sku_id:
-        print(f"[IQOO] Checking specific SKU ID: {sku_id}")
-    
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -472,39 +460,48 @@ def check_iqoo(product):
         html = res.text
         soup = BeautifulSoup(html, "html.parser")
 
-        # --- EXTRACT NAME from <title> or fallback (UNCHANGED) ---
+        # --- EXTRACT NAME from <title> or fallback ---
         page_title = soup.find('title')
         product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else product["name"]
         
-        # --- KEY STOCK SCRAPING LOGIC (UNCHANGED) ---
-        # ... (stock logic remains the same)
+        # --- KEY SCRAPING LOGIC ---
         buy_now_button = soup.select_one('button:contains("Buy Now"), a:contains("Buy Now")')
         out_of_stock_phrases = ["out of stock", "currently unavailable", "notify me"]
         page_text = soup.get_text().lower()
+        
         is_available = True
         availability_text = "Status indeterminate."
-        # ... (rest of stock availability logic)
         
-        # --- EXTRACT PRICE AND OFFERS (MODIFIED SELECTOR) ---
+        if buy_now_button:
+            is_disabled = buy_now_button.get('disabled') or 'disabled' in buy_now_button.get('class', []) or 'out-of-stock' in buy_now_button.get('class', [])
+            
+            if is_disabled:
+                is_available = False
+                availability_text = "Buy Now button disabled/out-of-stock class found."
+            else:
+                is_available = True
+                availability_text = "Active Buy Now button found."
+        
+        if not is_available and any(phrase in page_text for phrase in out_of_stock_phrases):
+             is_available = False
+             availability_text = "Explicit 'out of stock' phrase found in page text."
+             
+        if not buy_now_button and any(phrase in page_text for phrase in out_of_stock_phrases):
+             is_available = False
+             availability_text = "No clear button, but OOS text found."
+
+        # --- EXTRACT PRICE AND OFFERS ---
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price')
         price = price_el.get_text(strip=True) if price_el else None
         
-        # *** NEW PRECISE SELECTOR: TARGETS UL.offer-list LI.offer-content ***
-        # This selector targets the list of offers based on the HTML provided in your screenshot context
-        offers_content_elements = soup.select('ul.offer-list li.offer-item div.offer-content')
-        offers_text = ""
-        
-        if offers_content_elements:
-            # Extract the content from the specific div.offer-content within each list item
-            offers_text = "\n".join([f"  - {el.get_text(strip=True)}" for el in offers_content_elements])
+        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
+        offers = offer_el.get_text(strip=True) if offer_el else None
         
         price_info = ""
         if price:
             price_info += f"\n💰 Price: {price}"
-        if offers_text: 
-             # Only show 5 offers max to keep the message clean
-             top_offers = offers_text.split('\n')[:5]
-             price_info += f"\n🎁 Offers:\n" + "\n".join(top_offers)
+        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
+             price_info += f"\n🎁 Offers: {offers}"
 
 
         if is_available:
@@ -521,26 +518,17 @@ def check_iqoo(product):
     except Exception as e:
         print(f"[error] iQOO check failed for {product['name']}: {e}")
         return None
-# ... (rest of the check.py remains unchanged)
+
 # ==================================
-# 🤳 VIVO HTML PARSER CHECKER (UNCHANGED, but applies similar logic)
+# 🤳 VIVO HTML PARSER CHECKER (MODIFIED)
 # ==================================
 def check_vivo(product):
     """
     Check stock availability for a Vivo product by scraping its product page.
-    Includes enhanced scraping for name, price, and offers list, correctly handling SKU in URL.
     """
     url = product["url"]
     original_name = product["name"]
     print(f"[VIVO] Checking: {original_name} at {url}")
-    
-    # --- SKU HANDLING ---
-    parsed_url = urlparse(url)
-    query_params = parse_qs(parsed_url.query)
-    sku_id = query_params.get('skuId', [None])[0]
-    if sku_id:
-        print(f"[VIVO] Checking specific SKU ID: {sku_id}")
-
 
     headers = {
         "User-Agent": (
@@ -560,7 +548,7 @@ def check_vivo(product):
         page_title = soup.find('title')
         product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else original_name
 
-        # --- KEY STOCK SCRAPING LOGIC ---
+        # --- KEY SCRAPING LOGIC ---
         buy_now_link = soup.select_one('a.buyNow, .addToCart, .buyButton')
         out_of_stock_phrases = ["out of stock", "notify me", "currently unavailable"]
         page_text_lower = soup.get_text().lower()
@@ -590,21 +578,14 @@ def check_vivo(product):
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price, .js-final-price')
         price = price_el.get_text(strip=True) if price_el else None
         
-        # Attempt to scrape offers list using general selectors based on common containers
-        # Using general Vivo/iQOO class names
-        offers_list = soup.select('.product-offers li, .discount-details li, .emi-details li, ul.offer-list li')
-        offers_text = ""
-        if offers_list:
-            # Extract and join individual list item texts for clean display
-            offers_text = "\n".join([f"  - {li.get_text(strip=True)}" for li in offers_list])
-
+        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
+        offers = offer_el.get_text(strip=True) if offer_el else None
+        
         price_info = ""
         if price:
             price_info += f"\n💰 Price: {price}"
-        if offers_text: 
-             # Only show 5 offers max to keep the message clean
-             top_offers = offers_text.split('\n')[:5]
-             price_info += f"\n🎁 Offers:\n" + "\n".join(top_offers)
+        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
+             price_info += f"\n🎁 Offers: {offers}"
 
 
         if is_available:
@@ -621,7 +602,7 @@ def check_vivo(product):
     except Exception as e:
         print(f"[error] Vivo check failed for {original_name}: {e}")
         return None
-    
+
 # ==================================
 # 🚀 MAIN LOGIC
 # ==================================
