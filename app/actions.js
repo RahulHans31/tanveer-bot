@@ -73,7 +73,7 @@ async function getProductDetails(url, partNumber) {
             const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
             const pid = pathParts[pathParts.length - 1];
 
-            if (!pid || pid.length < 5) throw new Error('Could not find a valid product ID in the Vivo URL.');
+            if (!pid || pid.length < 4) throw new Error('Could not find a valid product ID in the Vivo URL.');
 
             const name = (pathParts[pathParts.length - 2] || 'Vivo Product')
                 .replace(/-/g, ' ').slice(0, 50) + '...';

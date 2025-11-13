@@ -443,7 +443,10 @@ def check_reliance_digital(product, pincode):
 # 📱 IQOO HTML PARSER CHECKER (MODIFIED)
 # ==================================
 def check_iqoo(product):
-    """Check stock availability for an iQOO product by scraping its product page."""
+    """
+    Check stock availability for an iQOO product by scraping its product page.
+    Includes enhanced scraping for name, price, and offers list.
+    """
     url = product["url"]
     print(f"[IQOO] Checking: {url}")
 
@@ -464,7 +467,7 @@ def check_iqoo(product):
         page_title = soup.find('title')
         product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else product["name"]
         
-        # --- KEY SCRAPING LOGIC ---
+        # --- KEY STOCK SCRAPING LOGIC ---
         buy_now_button = soup.select_one('button:contains("Buy Now"), a:contains("Buy Now")')
         out_of_stock_phrases = ["out of stock", "currently unavailable", "notify me"]
         page_text = soup.get_text().lower()
@@ -494,14 +497,19 @@ def check_iqoo(product):
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price')
         price = price_el.get_text(strip=True) if price_el else None
         
-        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
-        offers = offer_el.get_text(strip=True) if offer_el else None
+        # Attempt to scrape offers list (based on common UL structure)
+        # Using a more robust selector that finds ULs likely to contain offers
+        offers_ul = soup.select_one('div[class*="offers"] ul, ul[class*="offer-list"]') 
+        offers_text = ""
+        if offers_ul:
+            # Extract and join individual list item texts for clean display
+            offers_text = "\n".join([f"  - {li.get_text(strip=True)}" for li in offers_ul.find_all('li')])
         
         price_info = ""
         if price:
             price_info += f"\n💰 Price: {price}"
-        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
-             price_info += f"\n🎁 Offers: {offers}"
+        if offers_text: 
+             price_info += f"\n🎁 Offers:\n{offers_text}"
 
 
         if is_available:
@@ -525,6 +533,7 @@ def check_iqoo(product):
 def check_vivo(product):
     """
     Check stock availability for a Vivo product by scraping its product page.
+    Includes enhanced scraping for name, price, and offers list.
     """
     url = product["url"]
     original_name = product["name"]
@@ -548,7 +557,7 @@ def check_vivo(product):
         page_title = soup.find('title')
         product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else original_name
 
-        # --- KEY SCRAPING LOGIC ---
+        # --- KEY STOCK SCRAPING LOGIC ---
         buy_now_link = soup.select_one('a.buyNow, .addToCart, .buyButton')
         out_of_stock_phrases = ["out of stock", "notify me", "currently unavailable"]
         page_text_lower = soup.get_text().lower()
@@ -578,14 +587,18 @@ def check_vivo(product):
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price, .js-final-price')
         price = price_el.get_text(strip=True) if price_el else None
         
-        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
-        offers = offer_el.get_text(strip=True) if offer_el else None
-        
+        # Attempt to scrape offers list (based on common UL structure)
+        offers_ul = soup.select_one('div[class*="offers"] ul, ul[class*="offer-list"]')
+        offers_text = ""
+        if offers_ul:
+            # Extract and join individual list item texts for clean display
+            offers_text = "\n".join([f"  - {li.get_text(strip=True)}" for li in offers_ul.find_all('li')])
+
         price_info = ""
         if price:
             price_info += f"\n💰 Price: {price}"
-        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
-             price_info += f"\n🎁 Offers: {offers}"
+        if offers_text: 
+             price_info += f"\n🎁 Offers:\n{offers_text}"
 
 
         if is_available:
